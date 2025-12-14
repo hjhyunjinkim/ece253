@@ -8,7 +8,7 @@ from scipy.fft import fft2, ifft2
 # Implemented from paper Structure-Revealing Low-Light Image Enhancement Via Robust Retinex Model
 # https://ieeexplore.ieee.org/document/8304597
 class RobustRetinex:
-    def __init__(self, beta=0.01, omega=0.01, delta=10., gamma_correction=2.2):
+    def __init__(self, beta=0.01, omega=0.01, delta=10., gamma_correction=2.2, iterations=10, convergence_threshold=1e-3):
         """
         Initializes the Robust Retinex model parameters.
         Parameters based on Section IV-B-2 (Noise Suppression).
@@ -17,8 +17,8 @@ class RobustRetinex:
         self.omega = omega
         self.delta = delta
         self.gamma = gamma_correction
-        self.iterations = 10
-        self.epsilon = 1e-3 # Convergence threshold
+        self.iterations = iterations
+        self.epsilon = convergence_threshold
 
     def _get_gradients(self, img):
         """
