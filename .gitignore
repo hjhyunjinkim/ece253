@@ -30,4 +30,7 @@ logs/
 *.tmp
 *.temp
 
-# Note: Model checkpoints (*.pth) are NOT ignored - we want to track them
+# Model checkpoints (large binary files - exclude from git)
+*.pth
+*.pt
+*.ckpt
