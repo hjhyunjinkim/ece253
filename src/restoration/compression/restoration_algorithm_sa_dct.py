@@ -94,3 +94,4 @@ if __name__ == "__main__":
     
     cv2.imwrite("/path/to/restored_image.jpg", restored_image)
     print("Restored image saved!")
+

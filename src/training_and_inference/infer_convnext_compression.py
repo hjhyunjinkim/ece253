@@ -144,3 +144,4 @@ if __name__ == "__main__":
         if dict_result[condition]:
             accuracy, count_correct, count_total = dict_result[condition][0]
             print(f"{condition} Total accuracy: {accuracy:.2f}% ({count_correct}/{count_total})")
+

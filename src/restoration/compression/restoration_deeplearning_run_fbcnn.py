@@ -137,3 +137,4 @@ if __name__ == '__main__':
 
     enhanced_image = infer_image(path_image, path_ckpt)
     save_image(enhanced_image, path_save)
+

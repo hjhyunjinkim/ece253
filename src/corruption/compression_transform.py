@@ -90,3 +90,4 @@ if __name__ == "__main__":
     path_img_out = "/path/to/output/compressed_image.jpg"
     
     degrade_compression_image(path_img, path_img_out, quality_factor=20)
+
