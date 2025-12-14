@@ -2,6 +2,8 @@
 
 All code is located in `ece253_final/src/`.
 
+Dataset for Imagenet-1K was sourced from Kaggle(link: https://www.kaggle.com/datasets/sautkin/imagenet1kvalid)
+
 ---
 
 ## How to use low-light degradation, enhancement, and inference codes
