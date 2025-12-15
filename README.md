@@ -457,7 +457,7 @@ ece253_final/
 │   │   └── low_light_transform.py     # Low-light degradation
 │   └── restoration/
 │       ├── blur/
-│       │   ├── MPRNet/                # MPRNet weights + scripts (optional)
+│       │   ├── Blur_Learning/          # MPRNet (learning-based deblurring)
 │       │   └── restoration_classical.py # Classical blur deblurring
 │       └── low_light/
 │           ├── Epoch99.pth                                 # Zero-DCE++ checkpoint
@@ -791,7 +791,7 @@ ece253/
 │   │   └── compression_transform.py        # JPEG compression degradation
 │   └── restoration/
 │       ├── blur/
-│       │   ├── MPRNet/                     # MPRNet scripts + weights (optional)
+│       │   ├── Blur_Learning/              # MPRNet (learning-based deblurring)
 │       │   └── restoration_classical.py    # Classical blur deblurring
 │       ├── low_light/
 │       │   ├── Epoch99.pth                                 # Zero-DCE++ checkpoint
