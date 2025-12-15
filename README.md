@@ -1,6 +1,6 @@
-# ECE 253 Final Project: Low-Light Image Enhancement
+# ECE 253 Final Project: Image Restoration and Classification
 
-All code is located in `ece253_final/src/`.
+All code is located in `src/`.
 
 Dataset for Imagenet-1K was sourced from Kaggle(link: https://www.kaggle.com/datasets/sautkin/imagenet1kvalid)
 
@@ -296,6 +296,153 @@ for condition in ["og", "low_light", "classic", "zerodce"]:
 
 ---
 
+## How to use blur degradation, restoration, and inference codes
+
+## 1. Corrupt Clean Images with Motion/Defocus Blur
+
+**File**: `src/corruption/blur_transform.py`  
+**Main Class**: `CorruptionGenerator`  
+**Key Method**: `.generate_all(severities=['extreme'])`
+
+### Usage Example
+
+```python
+from src.corruption.blur_transform import CorruptionGenerator
+
+# Generate motion + defocus blur datasets at multiple severities
+generator = CorruptionGenerator(
+    input_dir="clean",        # Root with class folders of clean images
+    output_dir="corrupted"    # Where blurred sets + metadata.json are written
+)
+
+results = generator.generate_all(severities=["low", "medium", "high", "extreme"])
+print(results)  # dict with output folders for motion/defocus blur
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input_dir` | str | "clean" | Root folder containing class subfolders of clean images |
+| `output_dir` | str | "corrupted" | Destination root for blurred images + `metadata.json` |
+| `severities` | list[str] | `["extreme"]` | Severity levels to generate: `low`, `medium`, `high`, `extreme` |
+
+### Overview
+- Generates **motion blur** and **defocus blur** variants for each severity.  
+- Saves outputs under `corrupted/blur_motion_<severity>` and `corrupted/blur_defocus_<severity>` plus a `metadata.json` that lists all generated folders and parameters used.
+- Severity defaults map to kernel sizes:  
+  - low: motion 15, defocus 11  
+  - medium: motion 31, defocus 21  
+  - high: motion 51, defocus 35  
+  - extreme: motion 101, defocus 71
+
+
+## 2. Restore Images via Classical Deconvolution (Algorithmic)
+
+**File**: `src/restoration/blur/restoration_classical.py`  
+**Main Classes**: `ClassicalRestoration`, `RestorationPipeline`  
+**Key Methods**: `.restore_blur(image, method, kernel_size)`, `.restore_dataset(distorted_subdir, method)`, `.restore_all_classical()`
+
+### Usage Example
+
+```python
+from src.restoration.blur.restoration_classical import RestorationPipeline
+
+# Uses metadata produced by blur_transform.py (expects corrupted/metadata.json)
+pipeline = RestorationPipeline(
+    distorted_dir="corrupted",
+    output_dir="restored"
+)
+
+# Restore one distorted set
+pipeline.restore_dataset("blur_motion_extreme", method="classical")
+
+# Or restore everything listed in metadata.json
+pipeline.restore_all_classical()
+```
+
+### Parameters (ClassicalRestoration.restore_blur)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `image` | np.ndarray | - | Blurred BGR image |
+| `method` | str | "richardson_lucy" | `wiener` or `richardson_lucy` deconvolution |
+| `kernel_size` | int | 15 | Size of the estimated motion kernel |
+
+### Overview
+- Estimates a simple motion PSF then applies Wiener or Richardson–Lucy deconvolution.  
+- `RestorationPipeline.restore_all_classical()` reads `corrupted/metadata.json` and restores every blur distortion (motion + defocus) into `restored/blur_*_restored_classical`, writing `restored/restoration_metadata.json` with outputs.
+
+
+## 3. Evaluate ConvNeXt on Clean / Corrupted / Restored Blur Sets
+
+**File**: `src/training_and_inference/baseline_convnext_blur.py`  
+**Purpose**: Evaluate a pretrained ConvNeXt (no fine-tuning) on clean vs blurred vs restored subsets.
+
+### Usage Example
+
+```bash
+python src/training_and_inference/baseline_convnext_blur.py \
+  --clean_root clean_subset \
+  --corrupt_root corrupted/blur_motion_extreme \
+  --restored_root restored/blur_motion_extreme_restored_classical \
+  --class_mapping src/training_and_inference/class_mapping.json
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--clean_root` | str | (required) | Clean ImageFolder root |
+| `--corrupt_root` | str | (required) | Corrupted ImageFolder root |
+| `--restored_root` | str | (required) | Restored ImageFolder root |
+| `--class_mapping` | str | None | Optional JSON mapping folder name → ImageNet index (recommended: `src/training_and_inference/class_mapping.json`) |
+| `--batch_size` | int | 64 | Batch size for evaluation |
+| `--num_workers` | int | 4 | DataLoader workers |
+
+### Overview
+Runs ConvNeXt-Tiny on three datasets, computes accuracy for each, and prints recovery ratio `(R'_e - R') / (R - R')`.
+
+
+## 4. Fine-tune ConvNeXt on Blur-Restored Images
+
+**File**: `src/training_and_inference/finetune_convnext_blur.py`  
+**Purpose**: Fine-tune ConvNeXt on blur-restored data while mapping labels to ImageNet-1K indices via a class mapping file.
+
+### Usage Example
+
+```bash
+python src/training_and_inference/finetune_convnext_blur.py \
+  --data_root restored/blur_motion_extreme_restored_classical \
+  --class_mapping src/training_and_inference/class_mapping.json \
+  --model_out models/convnext_blur_finetuned.pth \
+  --epochs 10 \
+  --val_ratio 0.2
+```
+
+### Key Parameters
+
+| Parameter | Current Value | Typical Range | Effect |
+|-----------|---------------|---------------|--------|
+| `--data_root` | (required) | path | Root with restored blur images (ImageFolder) |
+| `--class_mapping` | (required) | json | Maps folder names → ImageNet indices (provided at `src/training_and_inference/class_mapping.json`) |
+| `--model_name` | `facebook/convnext-tiny-224` | HF model id/path | Backbone to fine-tune (uses native 1000-class head) |
+| `--batch_size` | 32 | 16-128 | Training/inference batch size |
+| `--epochs` | 20 | 1-50 | Training epochs |
+| `--lr` | 5e-5 | 1e-5-1e-3 | Learning rate |
+| `--weight_decay` | 1e-4 | 0-1e-3 | AdamW weight decay |
+| `--val_ratio` | 0.2 | 0.1-0.3 | Fraction for validation split |
+| `--freeze_backbone` | flag | - | Freeze all layers except classifier |
+| `--eval_clean_root / --eval_corrupt_root / --eval_restored_root` | optional | paths | Extra evaluation sets (auto-mapped to ImageNet indices) |
+
+### Overview
+- Builds train/val split automatically from `data_root`.  
+- Maps local class folders to ImageNet IDs via the provided JSON mapping so the original 1000-class head can be used.  
+- Saves the best validation checkpoint to `--model_out` and reports recovery ratios if extra eval sets are provided.
+
+
+---
+
 ## Directory Structure
 
 ```
@@ -305,16 +452,363 @@ ece253_final/
 ├── infer_convnext_lowlight.py         # Run ConvNeXt inference
 ├── src/
 │   ├── corruption/
-│   │   └── low_light_transform.py     # Degrade images
+│   │   ├── blur_transform.py          # Motion/defocus blur degradation
+│   │   ├── compression_transform.py   # JPEG compression degradation
+│   │   └── low_light_transform.py     # Low-light degradation
 │   └── restoration/
+│       ├── blur/
+│       │   ├── MPRNet/                # MPRNet weights + scripts (optional)
+│       │   └── restoration_classical.py # Classical blur deblurring
 │       └── low_light/
 │           ├── Epoch99.pth                                 # Zero-DCE++ checkpoint
 │           ├── restoration_algorithm_robust_retinex.py     # Retinex enhancement
 │           ├── restoration_deeplearning_run_zero_dce.py    # Zero-DCE++ enhancement
 │           └── zero_dce_model.py                           # Zero-DCE++ model architecture
+│       └── compression/
+│           ├── restoration_algorithm_sa_dct.py             # SA-DCT deblocking
+│           └── restoration_deeplearning_run_fbcnn.py      # FBCNN restoration
 │   └── training_and_inference/
-│       ├── finetune_convnext_lowlight.py                   # Fine-tune ConvNeXt
-│       └── infer_convnext_lowlight.py                      # Run ConvNeXt inference
+│       ├── baseline_convnext_blur.py                       # Eval clean/corrupt/restored (blur)
+│       ├── finetune_convnext_blur.py                       # Fine-tune ConvNeXt (blur)
+│       ├── finetune_convnext_lowlight.py                   # Fine-tune ConvNeXt (low-light)
+│       ├── infer_convnext_lowlight.py                      # Run ConvNeXt inference (low-light)
+│       ├── finetune_convnext_compression.py                # Fine-tune ConvNeXt (compression)
+│       ├── infer_convnext_compression.py                   # Run ConvNeXt inference (compression)
+│       └── class_mapping.json                              # Folder → ImageNet index map (blur)
+├── data/                              # Input images
+├── models/                            # Saved model checkpoints
+└── datasets/                          # Training/val datasets
+```
+
+---
+
+## How to use compression degradation, restoration, and inference codes
+
+## 1. Corrupt Clean Images with JPEG Compression
+
+**File**: `src/corruption/compression_transform.py`  
+**Main Function**: `degrade_compression_image(path_image, path_output, quality_factor)`
+
+### Usage Example
+
+```python
+from src.corruption.compression_transform import degrade_compression_image
+
+# Degrade a single image
+path_clean_image = "/path/to/clean_image.jpg"
+path_compressed_output = "/path/to/compressed_image.jpg"
+
+degrade_compression_image(
+    path_image=path_clean_image,
+    path_output=path_compressed_output,
+    quality_factor=20      # JPEG quality (1-100, lower = more compression)
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path_image` | str | - | Path to input clean image file |
+| `path_output` | str | - | Path to save compressed image |
+| `quality_factor` | int | 20 | JPEG quality factor (1-100). Lower values = more compression artifacts. |
+
+### Overview
+This function applies JPEG compression to clean images, introducing blocking artifacts and quality degradation. Lower quality factors (5-20) produce more noticeable compression artifacts.
+
+---
+
+## 2. Restore Images via SA-DCT (Algorithmic)
+
+**File**: `src/restoration/compression/restoration_algorithm_sa_dct.py`  
+**Main Class**: `SADCT`  
+**Key Method**: `.enhance(img_path)`
+
+### Usage Example
+
+```python
+from src.restoration.compression.restoration_algorithm_sa_dct import SADCT
+
+# Initialize the deblocking algorithm
+sa_dct = SADCT(block_size=8)
+
+# Restore a compressed image
+path_compressed_image = "/path/to/compressed_image.jpg"
+restored_image = sa_dct.enhance(path_compressed_image)
+
+# Save the result
+import cv2
+cv2.imwrite("/path/to/restored_image.jpg", restored_image)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `block_size` | int | 8 | JPEG block size (typically 8) |
+
+### Overview
+**SA-DCT** (Shape-Adaptive DCT) is an algorithmic approach to reduce JPEG blocking artifacts. This implementation uses bilateral filtering and smoothing to reduce block boundaries and artifacts.
+
+---
+
+## 3. Restore Images via FBCNN (Deep Learning)
+
+**File**: `src/restoration/compression/restoration_deeplearning_run_fbcnn.py`  
+**Main Function**: `infer_image(path_image, path_ckpt="", quality_factor=None)`
+
+### Usage Example
+
+```python
+from src.restoration.compression.restoration_deeplearning_run_fbcnn import infer_image, save_image
+
+# Restore using FBCNN
+path_compressed_image = "/path/to/compressed_image.jpg"
+path_checkpoint = "path/to/FBCNN_model.pth"  # Pre-trained weights (optional)
+
+restored_image = infer_image(path_compressed_image, path_checkpoint)
+
+# Save the restored image
+save_image(restored_image, "/path/to/restored_image.jpg")
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path_image` | str | - | Path to input compressed image |
+| `path_ckpt` | str | "" | Path to checkpoint file (.pth). If empty, uses placeholder implementation. |
+| `quality_factor` | int | None | Optional quality factor for FBCNN (if model supports it) |
+
+### Overview
+**FBCNN** (Flexible Blind Convolutional Neural Network) is a deep learning approach for JPEG compression artifact removal. If model weights are not available, the function falls back to an edge-preserving filter placeholder.
+
+The function returns a RGB numpy array of shape (H, W, 3) in float range [0, 1], so it needs to be saved using the save_image() function.
+
+---
+
+## 4. Process Images with Compression and Restoration Pipeline
+
+**File**: `process_compression_restoration.py`  
+**Purpose**: Batch process images with compression and restoration using both SA-DCT and FBCNN
+
+### Usage Example
+
+```bash
+# Process all images in a directory
+python process_compression_restoration.py \
+    --images-dir data \
+    --output-dir data/compression_restored \
+    --quality-factor 20 \
+    --fbcnn-model path/to/FBCNN_model.pth
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--images-dir` | str | "data" | Directory containing images to process |
+| `--output-dir` | str | "data/compression_restored" | Directory to save results |
+| `--quality-factor` | int | 20 | JPEG quality factor for compression |
+| `--no-compressed` | flag | False | Skip saving compressed images |
+| `--no-sadct` | flag | False | Skip SA-DCT restoration |
+| `--no-fbcnn` | flag | False | Skip FBCNN restoration |
+| `--fbcnn-model` | str | None | Path to FBCNN model weights (optional) |
+
+### Overview
+This script processes all images in a directory, applying JPEG compression and then restoring them using both SA-DCT and FBCNN methods. Output images are saved with appropriate suffixes:
+- `*_compressed_qf{quality}.jpg` - Compressed images
+- `*_sadct_restored.jpg` - SA-DCT restored images
+- `*_fbcnn_restored.jpg` - FBCNN restored images
+
+---
+
+## 5. Fine-tune ConvNeXt on Compression-Restored Images
+
+**File**: `src/training_and_inference/finetune_convnext_compression.py`  
+**Purpose**: Train a pre-trained ConvNeXt model on ImageNet-1K dataset combined with custom compression/restored images for classification
+
+### Parameters
+
+The following parameters in the `if __name__ == "__main__":` section control training:
+
+```python
+# ===== DATASET PATHS =====
+dataset_custom_compression = load_dataset(
+    "/path/to/datasets_nums/compression"
+)
+dataset_imagenet_val = load_dataset(
+    "/path/to/imagenet/kaggle/valid"
+)
+dataset_imagenet_train = load_dataset(
+    "/path/to/imagenet/kaggle/train"
+)
+
+# ===== MODEL CONFIGURATION =====
+MODEL_CHECKPOINT = "facebook/convnext-tiny-224"  # Model size/variant
+
+# ===== TRAINING HYPERPARAMETERS =====
+BATCH_SIZE = 256                    # Batch size (default: 256, paper uses 4096)
+LEARNING_RATE = 1e-4                # Learning rate for optimization
+NUM_EPOCHS = 5                       # Number of training epochs
+
+# ===== OUTPUT DIRECTORY =====
+OUTPUT_DIR = "/path/to/save/model"  # Where to save fine-tuned model
+```
+
+### Key Modifiable Parameters
+
+| Parameter | Current Value | Typical Range | Effect |
+|-----------|---------------|---------------|--------|
+| `MODEL_CHECKPOINT` | `facebook/convnext-tiny-224` | Varies | Model architecture. Larger: better accuracy but slower. Options: `convnext-tiny`, `convnext-small`, `convnext-base` |
+| `BATCH_SIZE` | 256 | 32-4096 | Larger = faster training but more VRAM. Paper uses 4096. |
+| `LEARNING_RATE` | 1e-4 | 1e-5 to 1e-2 | Higher = faster learning but may diverge. Lower = more stable. |
+| `NUM_EPOCHS` | 5 | 1-50 | More epochs = better training but slower. |
+
+### Dataset Structure
+
+The script expects:
+```
+datasets_nums/
+├── compression/
+│   ├── train/
+│   │   ├── class_1/
+│   │   │   └── image1.jpg
+│   │   └── class_2/
+│   │       └── image2.jpg
+│   └── test/
+│       └── ...
+```
+
+### Overview
+This script:
+1. Loads a pre-trained ConvNeXt model from Hugging Face
+2. Combines custom compression/restored dataset with ImageNet-1K training data
+3. Fine-tunes the model for image classification
+4. Saves the fine-tuned model
+
+### Concatenating datasets
+When combining the custom dataset with the Imagenet-1K dataset, it is required to unify the feature map used between the two datasets using .cast. If this step is not included, it will throw an error.
+
+```python
+dataset_custom = load_dataset("path/to/dataset")
+dataset_imagenet = load_dataset("path/to/imagenet/")
+# Alternatively, the dataset can be downloaded from Huggingface. Expect 10+ hours.
+dataset_imagenet = load_dataset("imagenet-1k", download_config=DownloadConfig(resume_download=True))          
+
+dataset_custom = dataset_custom.cast(dataset_imagenet.features)
+```
+
+---
+
+## 6. Infer Images with Trained ConvNeXt Models (Compression)
+
+**File**: `src/training_and_inference/infer_convnext_compression.py`  
+**Main Function**: `infer_image(path_image, processor, model, is_print=True)`
+
+### Usage Example
+
+```python
+from src.training_and_inference.infer_convnext_compression import load_model, infer_image
+
+# Load model and processor
+model_checkpoint = "/path/to/saved/model"  # or "facebook/convnext-tiny-224"
+processor, model = load_model(model_checkpoint)
+
+# Infer on a single image
+path_image = "/path/to/image.jpg"
+predicted_label, label_idx, confidence = infer_image(
+    path_image, 
+    processor, 
+    model, 
+    is_print=True
+)
+
+print(f"Predicted: {predicted_label}")
+print(f"Confidence: {confidence:.4f}")
+```
+
+### Parameters
+
+#### `load_model(model_name)`
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model_name` | str | Hugging Face model name or local path to saved model |
+| **Returns** | tuple | (processor, model) - ready for inference |
+
+#### `infer_image(path_image, processor, model, is_print=True)`
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path_image` | str | Path to input image (local or URL) |
+| `processor` | ConvNextImageProcessor | Image processor from Hugging Face |
+| `model` | ConvNextForImageClassification | Model from Hugging Face |
+| `is_print` | bool | Whether to print results to console |
+| **Returns** | tuple | (predicted_label, label_idx, confidence_score) |
+
+### Overview
+This script loads a fine-tuned ConvNeXt model and runs inference on images to classify them. It can test on multiple image conditions (original, compressed, restored with SA-DCT, restored with FBCNN).
+
+### Batch Evaluation Example
+
+```python
+# Evaluate on all conditions
+dir_root = "/path/to/datasets3"
+path_ckpt = "/path/to/model/checkpoint-XXXXX"
+
+processor, model = load_model(path_ckpt)
+
+results = {}
+for condition in ["og", "compressed", "sadct", "fbcnn"]:
+    count_total = 0
+    count_correct = 0
+    
+    condition_dir = os.path.join(dir_root, condition, "val")
+    for category in os.listdir(condition_dir):
+        for image_file in os.listdir(os.path.join(condition_dir, category)):
+            image_path = os.path.join(condition_dir, category, image_file)
+            label, idx, score = infer_image(image_path, processor, model, is_print=False)
+            
+            count_total += 1
+            if prediction_matches_ground_truth:  # Your logic here
+                count_correct += 1
+    
+    accuracy = (count_correct / count_total) * 100
+    print(f"{condition}: {accuracy:.2f}% ({count_correct}/{count_total})")
+```
+
+---
+
+## Directory Structure
+
+```
+ece253/
+├── README.md (this file)
+├── process_compression_restoration.py      # Process compression/restoration pipeline
+├── src/
+│   ├── corruption/
+│   │   ├── low_light_transform.py          # Low-light degradation
+│   │   ├── blur_transform.py               # Motion/defocus blur degradation
+│   │   └── compression_transform.py        # JPEG compression degradation
+│   └── restoration/
+│       ├── blur/
+│       │   ├── MPRNet/                     # MPRNet scripts + weights (optional)
+│       │   └── restoration_classical.py    # Classical blur deblurring
+│       ├── low_light/
+│       │   ├── Epoch99.pth                                 # Zero-DCE++ checkpoint
+│       │   ├── restoration_algorithm_robust_retinex.py     # Retinex enhancement
+│       │   ├── restoration_deeplearning_run_zero_dce.py    # Zero-DCE++ enhancement
+│       │   └── zero_dce_model.py                           # Zero-DCE++ model architecture
+│       └── compression/
+│           ├── restoration_algorithm_sa_dct.py             # SA-DCT deblocking
+│           └── restoration_deeplearning_run_fbcnn.py      # FBCNN restoration
+│   └── training_and_inference/
+│       ├── finetune_convnext_lowlight.py                   # Fine-tune ConvNeXt (low-light)
+│       ├── infer_convnext_lowlight.py                      # Run ConvNeXt inference (low-light)
+│       ├── baseline_convnext_blur.py                       # Eval clean/corrupt/restored (blur)
+│       ├── finetune_convnext_blur.py                       # Fine-tune ConvNeXt (blur)
+│       ├── finetune_convnext_compression.py                # Fine-tune ConvNeXt (compression)
+│       ├── infer_convnext_compression.py                   # Run ConvNeXt inference (compression)
+│       └── class_mapping.json                              # Folder → ImageNet index map for blur
 ├── data/                              # Input images
 ├── models/                            # Saved model checkpoints
 └── datasets/                          # Training/val datasets
